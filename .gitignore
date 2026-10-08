@@ -28,6 +28,15 @@ cookies.txt
 .env.*
 !.env.example
 appsettings.Development.json
+appsettings.Local.json
+secrets.json
+*.usersecrets
 TestResults/
 coverage/
 .build-check*/
+
+# Certificates and private keys
+*.pfx
+*.p12
+*.pem
+*.key
