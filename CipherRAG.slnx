@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="CipherRAG.Domain\CipherRAG.Domain.csproj" />
+  <Project Path="CipherRAG.Application\CipherRAG.Application.csproj" />
+  <Project Path="CipherRAG.Infrastructure\CipherRAG.Infrastructure.csproj" />
+  <Project Path="CipherRAG.API\CipherRAG.API.csproj" />
+</Solution>

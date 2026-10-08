@@ -1,0 +1,33 @@
+# .NET build outputs
+[Bb]in/
+[Oo]bj/
+*.user
+*.userosscache
+*.sln.docstates
+
+# Databases
+*.db
+*.db-shm
+*.db-wal
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE & OS
+.vs/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+cookies.txt
+
+# Local configuration and test artifacts
+.env
+.env.*
+!.env.example
+appsettings.Development.json
+TestResults/
+coverage/
+.build-check*/
