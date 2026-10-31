@@ -4,74 +4,128 @@ import {
 } from '../utils.js';
 
 let users = [];
-let page = 1;
-let pageSize = 15;
-let totalCount = 0;
-let totalPages = 0;
-let searchTerm = '';
+let roles = [];
+let currentTab = 'users'; // 'users' | 'roles'
+let userPage = 1;
+let userPageSize = 15;
+let userTotalCount = 0;
+let userTotalPages = 0;
+let userSearchTerm = '';
+let roleSearchTerm = '';
 
 export function renderUsersView(container, setTopbar) {
   setTopbar('Users & Roles');
   container.innerHTML = `
-    <div class="toolbar">
-      <div class="toolbar-left">
-        <div class="search-box">
-          ${icon('search', 14)}
-          <input type="text" id="userSearch" placeholder="Search users…">
+    <div class="view-pad" style="padding-top:16px">
+      <div class="toolbar" style="padding:0 0 14px">
+        <div class="pill-group" id="usersTabGroup">
+          <button class="pill active" data-tab="users">${icon('users', 14)} Users</button>
+          <button class="pill" data-tab="roles">${icon('shield', 14)} Roles & Clearances</button>
         </div>
-        <button class="btn btn-ghost btn-sm" id="userRefreshBtn">${icon('refresh', 13)} Refresh</button>
+        <div class="toolbar-right">
+          <div class="search-box" style="width:240px">
+            ${icon('search', 14)}
+            <input type="text" id="viewSearch" placeholder="Search users…">
+          </div>
+          <button class="btn btn-ghost btn-sm" id="viewRefreshBtn">${icon('refresh', 13)} Refresh</button>
+          <button class="btn btn-primary btn-sm" id="viewAddBtn">${icon('plus', 14)} Add user</button>
+        </div>
       </div>
-      <div class="toolbar-right">
-        <button class="btn btn-primary" id="userAddBtn">${icon('plus', 14)} Add user</button>
-      </div>
-    </div>
 
-    <div class="view-pad">
       <div class="card">
         <div class="card-header">
-          <div class="card-title">${icon('users', 15)} Access & identity</div>
-          <div class="badge badge-neutral" id="userCountBadge">0 users</div>
+          <div class="card-title" id="cardTitle">${icon('users', 15)} Access & Identity</div>
+          <div class="badge badge-neutral" id="viewCountBadge">0 items</div>
         </div>
-        <div id="userTableContainer"></div>
-        <div id="userPagination"></div>
+        <div id="contentTableContainer"></div>
+        <div id="contentPagination"></div>
       </div>
     </div>
   `;
 
-  container.querySelector('#userSearch').addEventListener('input', debounceSearch());
-  container.querySelector('#userRefreshBtn').addEventListener('click', loadUsers);
-  container.querySelector('#userAddBtn').addEventListener('click', openAddUserModal);
+  // Tab switching
+  container.querySelectorAll('#usersTabGroup .pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      container.querySelectorAll('#usersTabGroup .pill').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentTab = btn.dataset.tab;
+      updateToolbarForTab(container);
+      if (currentTab === 'users') loadUsers();
+      else loadRoles();
+    });
+  });
+
+  const searchInput = container.querySelector('#viewSearch');
+  searchInput.addEventListener('input', debounce(() => {
+    if (currentTab === 'users') {
+      userSearchTerm = searchInput.value.trim().toLowerCase();
+      userPage = 1;
+      const c = document.getElementById('contentTableContainer');
+      if (c) renderUserTable(c);
+    } else {
+      roleSearchTerm = searchInput.value.trim().toLowerCase();
+      const c = document.getElementById('contentTableContainer');
+      if (c) renderRoleTable(c);
+    }
+  }, 250));
+
+  container.querySelector('#viewRefreshBtn').addEventListener('click', () => {
+    if (currentTab === 'users') loadUsers();
+    else loadRoles();
+  });
+
+  container.querySelector('#viewAddBtn').addEventListener('click', () => {
+    if (currentTab === 'users') openAddUserModal();
+    else openRoleModal();
+  });
 
   loadUsers();
 }
 
-function debounceSearch() {
-  let t;
-  return () => {
-    clearTimeout(t);
-    t = setTimeout(() => {
-      searchTerm = document.getElementById('userSearch').value.trim().toLowerCase();
-      page = 1;
-      loadUsers();
-    }, 300);
+function updateToolbarForTab(container) {
+  const searchInput = container.querySelector('#viewSearch');
+  const addBtn = container.querySelector('#viewAddBtn');
+  const cardTitle = container.querySelector('#cardTitle');
+
+  if (currentTab === 'users') {
+    searchInput.placeholder = 'Search users by name, email, department…';
+    searchInput.value = userSearchTerm;
+    addBtn.innerHTML = `${icon('plus', 14)} Add user`;
+    cardTitle.innerHTML = `${icon('users', 15)} Access & Identity`;
+  } else {
+    searchInput.placeholder = 'Search roles by name or clearance…';
+    searchInput.value = roleSearchTerm;
+    addBtn.innerHTML = `${icon('plus', 14)} Add role`;
+    cardTitle.innerHTML = `${icon('shield', 15)} System Roles & Clearance Governance`;
+  }
+}
+
+function debounce(fn, ms) {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
   };
 }
 
+// ================= USER MANAGEMENT =================
+
 async function loadUsers() {
-  const container = document.getElementById('userTableContainer');
+  const container = document.getElementById('contentTableContainer');
   if (!container) return;
   container.innerHTML = `<div class="skeleton-row">
     <div class="skeleton"></div><div class="skeleton" style="width:70%"></div><div class="skeleton" style="width:45%"></div>
   </div>`;
 
   try {
-    const res = await api.getPagedUsers(page, pageSize);
-    users = [...res.items];
-    totalCount = res.totalCount;
-    totalPages = res.totalPages || 1;
+    const res = await api.getPagedUsers(userPage, userPageSize);
+    users = Array.isArray(res?.items) ? [...res.items] : [];
+    userTotalCount = res?.totalCount ?? users.length;
+    userTotalPages = res?.totalPages || 1;
     renderUserTable(container);
-    renderPagination();
-    document.getElementById('userCountBadge').textContent = `${totalCount} users`;
+    renderUserPagination();
+    const badge = document.getElementById('viewCountBadge');
+    if (badge) badge.textContent = `${userTotalCount} users`;
   } catch (err) {
     container.innerHTML = `<div class="empty-state">
       ${icon('alert', 30)}
@@ -84,18 +138,19 @@ async function loadUsers() {
 
 function renderUserTable(container) {
   let list = users;
-  if (searchTerm) {
+  if (userSearchTerm) {
     list = list.filter(u =>
-      u.fullName.toLowerCase().includes(searchTerm) ||
-      u.email.toLowerCase().includes(searchTerm) ||
-      u.department.toLowerCase().includes(searchTerm));
+      (u.fullName || '').toLowerCase().includes(userSearchTerm) ||
+      (u.email || '').toLowerCase().includes(userSearchTerm) ||
+      (u.department || '').toLowerCase().includes(userSearchTerm) ||
+      (u.roleName || '').toLowerCase().includes(userSearchTerm));
   }
 
   if (!list.length) {
     container.innerHTML = `<div class="empty-state">
       ${icon('users', 30)}
       <h3>No users found</h3>
-      <p>Provision accounts and assign roles here.</p>
+      <p>No user accounts match the search criteria.</p>
     </div>`;
     return;
   }
@@ -122,7 +177,8 @@ function renderUserTable(container) {
       </td>
       <td>
         <div class="row-actions">
-          <button class="icon-btn" data-edit-user="${u.userId}" title="Edit">${icon('edit', 14)}</button>
+          <button class="icon-btn" data-edit-user="${u.userId}" title="Edit User">${icon('edit', 14)}</button>
+          <button class="icon-btn danger" data-delete-user="${u.userId}" title="Delete User">${icon('x', 14)}</button>
         </div>
       </td>
     </tr>`;
@@ -165,6 +221,21 @@ function renderUserTable(container) {
       if (user) openEditUserModal(user);
     });
   });
+
+  container.querySelectorAll('[data-delete-user]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const user = users.find(u => u.userId === btn.dataset.deleteUser);
+      if (!user) return;
+      if (!confirm(`Are you sure you want to delete user '${user.fullName}' (${user.email})?`)) return;
+      try {
+        await api.deleteUser(user.userId);
+        toast('User deleted successfully.', 'success');
+        loadUsers();
+      } catch (err) {
+        toast(err.message || 'Delete failed.', 'error');
+      }
+    });
+  });
 }
 
 function initial(name) {
@@ -181,34 +252,137 @@ function getRoleTone(role) {
   return 'neutral';
 }
 
-function renderPagination() {
-  const host = document.getElementById('userPagination');
+function renderUserPagination() {
+  const host = document.getElementById('contentPagination');
   if (!host) return;
-  if (totalPages <= 1) { host.innerHTML = ''; return; }
+  if (userTotalPages <= 1) { host.innerHTML = ''; return; }
   let controls = '';
-  for (let p = 1; p <= totalPages; p++) {
-    if (totalPages > 9 && p > 2 && p < totalPages - 1 && Math.abs(p - page) > 2) {
+  for (let p = 1; p <= userTotalPages; p++) {
+    if (userTotalPages > 9 && p > 2 && p < userTotalPages - 1 && Math.abs(p - userPage) > 2) {
       if (controls.endsWith('…')) continue;
       controls += `<span style="color:var(--text-3);font-size:12px;padding:0 4px">…</span>`;
       continue;
     }
-    controls += `<button class="page-btn ${p === page ? 'active' : ''}" data-page="${p}">${p}</button>`;
+    controls += `<button class="page-btn ${p === userPage ? 'active' : ''}" data-page="${p}">${p}</button>`;
   }
   host.innerHTML = `<div class="pagination">
-    <div class="pagination-info">Page ${page} of ${totalPages} · ${totalCount} users</div>
+    <div class="pagination-info">Page ${userPage} of ${userTotalPages} · ${userTotalCount} users</div>
     <div class="pagination-controls">
-      <button class="page-btn" data-page="${page - 1}" ${page <= 1 ? 'disabled' : ''}>${icon('chevron', 12)}</button>
+      <button class="page-btn" data-page="${userPage - 1}" ${userPage <= 1 ? 'disabled' : ''}>${icon('chevron', 12)}</button>
       ${controls}
-      <button class="page-btn" data-page="${page + 1}" ${page >= totalPages ? 'disabled' : ''}>${icon('chevron', 12)}</button>
+      <button class="page-btn" data-page="${userPage + 1}" ${userPage >= userTotalPages ? 'disabled' : ''}>${icon('chevron', 12)}</button>
     </div>
   </div>`;
   host.querySelectorAll('.page-btn[data-page]').forEach(btn => {
     btn.addEventListener('click', () => {
       const p = Number(btn.dataset.page);
-      if (p >= 1 && p <= totalPages) { page = p; loadUsers(); }
+      if (p >= 1 && p <= userTotalPages) { userPage = p; loadUsers(); }
     });
   });
 }
+
+// ================= ROLE MANAGEMENT =================
+
+async function loadRoles() {
+  const container = document.getElementById('contentTableContainer');
+  const pagHost = document.getElementById('contentPagination');
+  if (pagHost) pagHost.innerHTML = '';
+  if (!container) return;
+  container.innerHTML = `<div class="skeleton-row">
+    <div class="skeleton"></div><div class="skeleton" style="width:70%"></div><div class="skeleton" style="width:45%"></div>
+  </div>`;
+
+  try {
+    roles = await api.getRoles();
+    if (!Array.isArray(roles)) roles = [];
+    renderRoleTable(container);
+    const badge = document.getElementById('viewCountBadge');
+    if (badge) badge.textContent = `${roles.length} roles`;
+  } catch (err) {
+    container.innerHTML = `<div class="empty-state">
+      ${icon('alert', 30)}
+      <h3>Could not load roles</h3>
+      <p>${escapeHtml(err.message || 'An error occurred.')}</p>
+    </div>`;
+  }
+}
+
+function renderRoleTable(container) {
+  let list = roles;
+  if (roleSearchTerm) {
+    list = list.filter(r =>
+      (r.roleName || '').toLowerCase().includes(roleSearchTerm) ||
+      String(r.clinicalClearance ?? '').includes(roleSearchTerm));
+  }
+
+  if (!list.length) {
+    container.innerHTML = `<div class="empty-state">
+      ${icon('shield', 30)}
+      <h3>No roles found</h3>
+      <p>Create roles to structure clinical clearance and authorization tiers.</p>
+    </div>`;
+    return;
+  }
+
+  const rows = list.map(r => {
+    const cat = (r.roleCategory === 0 || r.roleCategory === 'Clinical') ? 'Clinical' : 'Operational';
+    const catBadge = cat === 'Clinical' ? 'badge-primary' : 'badge-neutral';
+    const polBadge = r.canManagePolicies ? `<span class="badge badge-success">Policies</span>` : `<span class="badge badge-neutral">No</span>`;
+    const auditBadge = r.canViewAuditDashboard ? `<span class="badge badge-warning">Audit Trail</span>` : `<span class="badge badge-neutral">No</span>`;
+
+    return `<tr>
+      <td style="font-weight:600">
+        <div style="display:flex;align-items:center;gap:8px">
+          ${icon('shield', 14)}
+          <span>${escapeHtml(r.roleName)}</span>
+        </div>
+      </td>
+      <td><span class="badge ${catBadge}">${cat}</span></td>
+      <td><span class="badge badge-accent">Clearance Level ${r.clinicalClearance ?? '0'}</span></td>
+      <td>${polBadge}</td>
+      <td>${auditBadge}</td>
+      <td>
+        <div class="row-actions">
+          <button class="icon-btn" data-edit-role="${r.roleId}" title="Edit Role">${icon('edit', 14)}</button>
+          <button class="icon-btn danger" data-delete-role="${r.roleId}" title="Delete Role">${icon('x', 14)}</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  container.innerHTML = `<div class="data-table-wrap">
+    <table class="data-table">
+      <thead><tr>
+        <th>Role Name</th><th>Category</th><th>Clearance</th><th>Policy Admin</th><th>Audit Access</th><th style="text-align:right">Actions</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+
+  container.querySelectorAll('[data-edit-role]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const role = roles.find(r => String(r.roleId).toLowerCase() === String(btn.dataset.editRole).toLowerCase());
+      if (role) openRoleModal(role);
+    });
+  });
+
+  container.querySelectorAll('[data-delete-role]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const role = roles.find(r => String(r.roleId).toLowerCase() === String(btn.dataset.deleteRole).toLowerCase());
+      if (!role) return;
+      if (!confirm(`Are you sure you want to delete role '${role.roleName}'?`)) return;
+      try {
+        await api.deleteRole(role.roleId);
+        toast(`Role '${role.roleName}' deleted successfully.`, 'success');
+        loadRoles();
+      } catch (err) {
+        toast(err.message || 'Cannot delete role.', 'error');
+      }
+    });
+  });
+}
+
+// ================= MODALS =================
 
 function openModal(html) {
   const host = document.getElementById('modalHost');
@@ -228,12 +402,14 @@ function closeModal() {
 
 async function getRoleOptions(selectedId) {
   try {
-    const roles = await api.getRoles();
-    if (!Array.isArray(roles) || !roles.length) {
+    const rList = await api.getRoles();
+    if (!Array.isArray(rList) || !rList.length) {
       return '<option value="" disabled selected>No roles available</option>';
     }
-    return roles.map(role =>
-      `<option value="${role.roleId}" ${role.roleId === selectedId ? 'selected' : ''}>${escapeHtml(role.roleName)}</option>`).join('');
+    return rList.map(role => {
+      const isSel = selectedId && String(role.roleId).toLowerCase() === String(selectedId).toLowerCase();
+      return `<option value="${role.roleId}" ${isSel ? 'selected' : ''}>${escapeHtml(role.roleName)} (L${role.clinicalClearance ?? '0'})</option>`;
+    }).join('');
   } catch {
     return '<option value="" disabled selected>Could not load roles</option>';
   }
@@ -243,14 +419,14 @@ async function openAddUserModal() {
   const roleOptions = await getRoleOptions();
   const backdrop = openModal(`
     <div class="modal-header">
-      <div class="modal-title">${icon('plus', 15)} Add user</div>
+      <div class="modal-title">${icon('plus', 15)} Add User</div>
       <button class="icon-btn" onclick="document.getElementById('modalHost').innerHTML=''">${icon('x', 15)}</button>
     </div>
     <div class="modal-body">
       <div class="form-row">
         <div class="form-group">
-          <label>Full name</label>
-          <input class="input" id="nuName" placeholder="e.g. Mona Hassan">
+          <label>Full name <span style="color:#ef4444">*</span></label>
+          <input class="input" id="nuName" placeholder="e.g. Dr. Mona Hassan">
         </div>
         <div class="form-group">
           <label>Department</label>
@@ -258,23 +434,23 @@ async function openAddUserModal() {
         </div>
       </div>
       <div class="form-group">
-        <label>Email</label>
+        <label>Email <span style="color:#ef4444">*</span></label>
         <input class="input" type="email" id="nuEmail" placeholder="user@cipherrag.local">
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label>Password</label>
+          <label>Password <span style="color:#ef4444">*</span></label>
           <input class="input" type="password" id="nuPassword" placeholder="Temporary password">
         </div>
         <div class="form-group">
-          <label>Role</label>
+          <label>Role <span style="color:#ef4444">*</span></label>
           <select class="select" id="nuRole">${roleOptions}</select>
         </div>
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" id="nuCancelBtn">Cancel</button>
-      <button class="btn btn-primary" id="nuSubmitBtn">${icon('check', 14)} Create user</button>
+      <button class="btn btn-primary" id="nuSubmitBtn">${icon('check', 14)} Create User</button>
     </div>
   `);
 
@@ -296,7 +472,7 @@ async function openAddUserModal() {
         password,
         department: document.getElementById('nuDept').value.trim() || 'General'
       });
-      toast(`User ${email} created.`, 'success');
+      toast(`User ${email} created successfully.`, 'success');
       closeModal();
       loadUsers();
     } catch (err) {
@@ -311,7 +487,7 @@ async function openEditUserModal(user) {
   const roleOptions = await getRoleOptions(user.roleId);
   const backdrop = openModal(`
     <div class="modal-header">
-      <div class="modal-title">${icon('edit', 15)} Edit user</div>
+      <div class="modal-title">${icon('edit', 15)} Edit User</div>
       <button class="icon-btn" onclick="document.getElementById('modalHost').innerHTML=''">${icon('x', 15)}</button>
     </div>
     <div class="modal-body">
@@ -358,11 +534,112 @@ async function openEditUserModal(user) {
         department: document.getElementById('euDept').value.trim() || 'General',
         isActive: document.getElementById('euActive').checked
       });
-      toast('User updated.', 'success');
+      toast('User updated successfully.', 'success');
       closeModal();
       loadUsers();
     } catch (err) {
       toast(err.message || 'Update failed.', 'error');
+    } finally {
+      setLoading(btn, false);
+    }
+  });
+}
+
+function openRoleModal(role = null) {
+  const isEdit = !!role;
+  const host = document.getElementById('modalHost');
+  
+  host.innerHTML = `
+    <div class="modal-backdrop open" id="roleModalBackdrop">
+      <div class="modal" style="max-width:480px">
+        <div class="modal-header">
+          <div class="modal-title">${icon('shield', 15)} ${isEdit ? 'Edit Role' : 'Create Role'}</div>
+          <button class="icon-btn" id="closeRoleModalBtn">${icon('x', 15)}</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>Role Name <span style="color:#ef4444">*</span></label>
+            <input class="input" id="roName" value="${escapeHtml(role?.roleName || '')}" placeholder="e.g. ChiefSurgeon, ComplianceAuditor">
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Role Category</label>
+              <select class="select" id="roCategory">
+                <option value="0" ${(!role || role.roleCategory === 0 || role.roleCategory === 'Clinical') ? 'selected' : ''}>Clinical</option>
+                <option value="1" ${(role && (role.roleCategory === 1 || role.roleCategory === 'Operational')) ? 'selected' : ''}>Operational</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Clearance Level (0 to 5)</label>
+              <input class="input" type="number" min="0" max="5" id="roClearance" value="${role?.clinicalClearance ?? 1}">
+            </div>
+          </div>
+          <div class="form-group" style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" id="roManagePolicies" ${role?.canManagePolicies ? 'checked' : ''} style="width:16px;height:16px">
+              Can manage security policies (ABAC rules)
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" id="roViewAudit" ${role?.canViewAuditDashboard ? 'checked' : ''} style="width:16px;height:16px">
+              Can view audit trail & logs
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" id="cancelRoleBtn">Cancel</button>
+          <button class="btn btn-primary" id="saveRoleBtn">${isEdit ? 'Save Changes' : 'Create Role'}</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const close = () => { host.innerHTML = ''; };
+  host.querySelector('#closeRoleModalBtn').addEventListener('click', close);
+  host.querySelector('#cancelRoleBtn').addEventListener('click', close);
+
+  const backdrop = host.querySelector('#roleModalBackdrop');
+  backdrop.addEventListener('mousedown', (e) => {
+    if (e.target === backdrop) close();
+  });
+
+  host.querySelector('#saveRoleBtn').addEventListener('click', async () => {
+    const roleName = document.getElementById('roName').value.trim();
+    if (!roleName) {
+      toast('Role name is required.', 'warning');
+      return;
+    }
+    const roleCategory = Number(document.getElementById('roCategory').value);
+    const clinicalClearance = Math.max(0, Math.min(5, Number(document.getElementById('roClearance').value) || 0));
+    const canManagePolicies = document.getElementById('roManagePolicies').checked;
+    const canViewAuditDashboard = document.getElementById('roViewAudit').checked;
+
+    const btn = host.querySelector('#saveRoleBtn');
+    setLoading(btn, true, isEdit ? 'Saving…' : 'Creating…');
+
+    try {
+      if (isEdit) {
+        await api.updateRole(role.roleId, {
+          roleName,
+          roleCategory,
+          clinicalClearance,
+          canManagePolicies,
+          canViewAuditDashboard
+        });
+        toast(`Role '${roleName}' updated successfully.`, 'success');
+      } else {
+        await api.createRole({
+          roleName,
+          roleCategory,
+          clinicalClearance,
+          canManagePolicies,
+          canViewAuditDashboard
+        });
+        toast(`Role '${roleName}' created successfully.`, 'success');
+      }
+      close();
+      loadRoles();
+    } catch (err) {
+      toast(err.message || 'Operation failed.', 'error');
     } finally {
       setLoading(btn, false);
     }

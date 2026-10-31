@@ -1,10 +1,10 @@
-import { api, ApiError } from './api.js?v=20261031_2';
-import { icon, toast } from './utils.js?v=20261031_2';
-import { renderChatView, loadState as loadChatState } from './views/chat.js?v=20261031_2';
-import { renderKnowledgeView } from './views/knowledge.js?v=20261031_2';
-import { renderAuditView } from './views/audit.js?v=20261031_2';
-import { renderUsersView } from './views/users.js?v=20261031_2';
-import { renderPoliciesView } from './views/policies.js?v=20261031_2';
+import { api, ApiError } from './api.js?v=20261031_3';
+import { icon, toast } from './utils.js?v=20261031_3';
+import { renderChatView, loadState as loadChatState } from './views/chat.js?v=20261031_3';
+import { renderKnowledgeView } from './views/knowledge.js?v=20261031_3';
+import { renderAuditView } from './views/audit.js?v=20261031_3';
+import { renderUsersView } from './views/users.js?v=20261031_3';
+import { renderPoliciesView } from './views/policies.js?v=20261031_3';
 
 let currentUser = null;
 let viewContainer = null;
@@ -75,6 +75,7 @@ async function boot() {
 
   window.addEventListener('app:unauthorized', () => {
     currentUser = null;
+    loadChatState(null);
     showLogin();
     toast('Your session has expired. Please sign in again.', 'warning');
   });
@@ -141,6 +142,7 @@ function wireStaticUI() {
     try { await api.logout(); } catch { /* ignore */ }
     api.clearAccessToken();
     currentUser = null;
+    loadChatState(null);
     showLogin();
   });
 
@@ -167,10 +169,11 @@ function showLogin() {
 }
 
 function enterApp(me) {
+  currentUser = me;
   document.body.classList.add('authenticated');
   updateUserCard(me);
   updateNavVisibility(me);
-  loadChatState();
+  loadChatState(me);
   switchView('chat');
   checkHealth();
 }

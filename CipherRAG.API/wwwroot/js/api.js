@@ -179,7 +179,7 @@ export const api = {
   // --- ABAC Policies ---
   getPolicies: () => request('/api/policies'),
   getPolicy: (id) => request(`/api/policies/${id}`),
-  getPolicyRoles: () => request('/api/policies/roles'),
+  getPolicyRoles: () => request('/api/roles'),
   createPolicy: (data) => request('/api/policies', { method: 'POST', body: data }),
   updatePolicy: (id, data) => request(`/api/policies/${id}`, { method: 'PUT', body: data }),
   togglePolicy: (id) => request(`/api/policies/${id}/toggle`, { method: 'PATCH' }),

@@ -57,7 +57,7 @@ async function loadPolicies() {
   try {
     const [pList, rList] = await Promise.all([
       api.getPolicies(),
-      api.getPolicyRoles().catch(() => [])
+      api.getRoles().catch(() => api.getPolicyRoles().catch(() => []))
     ]);
 
     policies = Array.isArray(pList) ? pList : [];
@@ -139,7 +139,7 @@ function renderPolicyTable(list) {
 
     return `
       <tr>
-        <td style="font-weight:600">${escapeHtml(p.roleName)}</td>
+        <td style="font-weight:600">${escapeHtml(p.roleName || 'General Role')}</td>
         <td><span class="badge badge-primary">${escapeHtml(p.allowedDepartment || 'All')}</span></td>
         <td>${shift}</td>
         <td>${ips}</td>
@@ -179,8 +179,10 @@ function renderPolicyTable(list) {
 
   container.querySelectorAll('.toggle-policy-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      if (!id) return;
       try {
-        await api.togglePolicy(btn.dataset.id);
+        await api.togglePolicy(id);
         toast('Policy status updated', 'success');
         loadPolicies();
       } catch (err) {
@@ -191,17 +193,19 @@ function renderPolicyTable(list) {
 
   container.querySelectorAll('.edit-policy-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      const p = policies.find(x => x.policyId === btn.dataset.id);
+      const p = policies.find(x => String(x.policyId).toLowerCase() === String(btn.dataset.id).toLowerCase());
       if (p) openPolicyModal(p);
     });
   });
 
   container.querySelectorAll('.delete-policy-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      if (!id) return;
       if (!confirm('Are you sure you want to delete this access policy?')) return;
       try {
-        await api.deletePolicy(btn.dataset.id);
-        toast('Policy deleted', 'success');
+        await api.deletePolicy(id);
+        toast('Policy deleted successfully', 'success');
         loadPolicies();
       } catch (err) {
         toast(err.message || 'Failed to delete policy', 'error');
@@ -210,16 +214,31 @@ function renderPolicyTable(list) {
   });
 }
 
-function openPolicyModal(policy = null) {
+async function openPolicyModal(policy = null) {
   const isEdit = !!policy;
   const host = document.getElementById('modalHost');
 
-  const roleOptions = roles.map(r => 
-    `<option value="${r.roleId}" ${policy && policy.roleId === r.roleId ? 'selected' : ''}>${escapeHtml(r.roleName)} (Clearance L${r.clinicalClearance})</option>`
-  ).join('');
+  if (!roles || !roles.length) {
+    try {
+      roles = await api.getRoles();
+    } catch {
+      roles = [];
+    }
+  }
 
-  const ipString = policy && policy.allowedIpRanges ? policy.allowedIpRanges.join(', ') : '127.0.0.1, ::1, *';
-  const countryString = policy && policy.allowedCountries ? policy.allowedCountries.join(', ') : 'EG, US, *';
+  const roleOptions = roles.length
+    ? roles.map(r => {
+        const isSelected = policy && String(r.roleId).toLowerCase() === String(policy.roleId).toLowerCase();
+        return `<option value="${r.roleId}" ${isSelected ? 'selected' : ''}>${escapeHtml(r.roleName)} (Clearance L${r.clinicalClearance ?? '—'})</option>`;
+      }).join('')
+    : '<option value="" disabled selected>No roles available</option>';
+
+  const ipString = policy && Array.isArray(policy.allowedIpRanges) && policy.allowedIpRanges.length
+    ? policy.allowedIpRanges.join(', ')
+    : '*';
+  const countryString = policy && Array.isArray(policy.allowedCountries) && policy.allowedCountries.length
+    ? policy.allowedCountries.join(', ')
+    : '*';
 
   host.innerHTML = `
     <div class="modal-backdrop open" id="policyModalBackdrop">
@@ -230,14 +249,15 @@ function openPolicyModal(policy = null) {
         </div>
         <div class="modal-body">
           <div class="form-group">
-            <label>Target Role</label>
+            <label>Target Role <span style="color:#ef4444">*</span></label>
             <select class="input" id="polRoleId">
+              ${isEdit ? '' : '<option value="" disabled selected>-- Select a Target Role --</option>'}
               ${roleOptions}
             </select>
           </div>
           <div class="form-group">
             <label>Authorized Department (or '*' for any)</label>
-            <input class="input" id="polDept" value="${escapeHtml(policy?.allowedDepartment || '*')}" placeholder="e.g. CyberSecurity or *">
+            <input class="input" id="polDept" value="${escapeHtml(policy?.allowedDepartment || '*')}" placeholder="e.g. CyberSecurity, Cardiology or *">
           </div>
           <div class="form-row">
             <div class="form-group">
@@ -258,7 +278,7 @@ function openPolicyModal(policy = null) {
             <input class="input" id="polCountries" value="${escapeHtml(countryString)}" placeholder="EG, US, *">
           </div>
           <div class="form-group" style="display:flex;align-items:center;gap:8px;margin-top:8px">
-            <input type="checkbox" id="polActive" ${(policy ? policy.isActive : true) ? 'checked' : ''}>
+            <input type="checkbox" id="polActive" ${(policy ? policy.isActive : true) ? 'checked' : ''} style="width:16px;height:16px">
             <label for="polActive" style="margin:0;cursor:pointer">Enforce this policy actively</label>
           </div>
         </div>
@@ -274,11 +294,27 @@ function openPolicyModal(policy = null) {
   host.querySelector('#closePolicyModalBtn').addEventListener('click', close);
   host.querySelector('#cancelPolicyBtn').addEventListener('click', close);
 
+  const backdrop = host.querySelector('#policyModalBackdrop');
+  backdrop.addEventListener('mousedown', (e) => {
+    if (e.target === backdrop) close();
+  });
+
   host.querySelector('#savePolicyBtn').addEventListener('click', async () => {
     const roleId = host.querySelector('#polRoleId').value;
-    const dept = host.querySelector('#polDept').value.trim();
-    const startTime = host.querySelector('#polStartTime').value;
-    const endTime = host.querySelector('#polEndTime').value;
+    if (!roleId) {
+      toast('Please select a target role for this policy.', 'warning');
+      return;
+    }
+
+    const dept = host.querySelector('#polDept').value.trim() || '*';
+    const startTime = host.querySelector('#polStartTime').value || null;
+    const endTime = host.querySelector('#polEndTime').value || null;
+
+    if ((startTime && !endTime) || (!startTime && endTime)) {
+      toast('Both Shift Start Time and End Time must be filled, or both left blank for 24/7 access.', 'warning');
+      return;
+    }
+
     const ips = host.querySelector('#polIps').value.split(',').map(s => s.trim()).filter(Boolean);
     const countries = host.querySelector('#polCountries').value.split(',').map(s => s.trim()).filter(Boolean);
     const isActive = host.querySelector('#polActive').checked;
@@ -286,12 +322,15 @@ function openPolicyModal(policy = null) {
     const payload = {
       roleId,
       allowedDepartment: dept,
-      startTime: startTime || null,
-      endTime: endTime || null,
-      allowedIpRanges: ips,
-      allowedCountries: countries,
+      startTime,
+      endTime,
+      allowedIpRanges: ips.length ? ips : ['*'],
+      allowedCountries: countries.length ? countries : ['*'],
       isActive
     };
+
+    const saveBtn = host.querySelector('#savePolicyBtn');
+    setLoading(saveBtn, true, isEdit ? 'Saving…' : 'Creating…');
 
     try {
       if (isEdit) {
@@ -305,6 +344,8 @@ function openPolicyModal(policy = null) {
       loadPolicies();
     } catch (err) {
       toast(err.message || 'Failed to save policy', 'error');
+    } finally {
+      setLoading(saveBtn, false);
     }
   });
 }

@@ -20,6 +20,8 @@ public static class PolicyEndpoints
         group.MapGet("/", GetAllPolicies)
              .WithName("GetAllPolicies");
 
+        group.MapGet("/roles", GetPolicyRoles)
+             .WithName("GetPolicyRoles");
 
         group.MapGet("/{id:guid}", GetPolicyById)
              .WithName("GetPolicyById");
@@ -51,6 +53,25 @@ public static class PolicyEndpoints
         return Results.Ok(policies.Select(AccessPolicyDto.FromEntity).ToList());
     }
 
+    public static async Task<IResult> GetPolicyRoles(AppDbContext context, CancellationToken ct)
+    {
+        var roles = await context.Roles
+            .AsNoTracking()
+            .OrderBy(r => r.RoleName)
+            .Select(r => new RoleDto
+            {
+                RoleId = r.RoleId,
+                RoleName = r.RoleName,
+                RoleCategory = r.RoleCategory,
+                ClinicalClearance = r.ClinicalClearance,
+                CanManagePolicies = r.CanManagePolicies,
+                CanViewAuditDashboard = r.CanViewAuditDashboard
+            })
+            .ToListAsync(ct);
+
+        return Results.Ok(roles);
+    }
+
     public static async Task<IResult> GetPolicyById(Guid id, AppDbContext context, CancellationToken ct)
     {
         var policy = await context.AccessPolicies
@@ -64,6 +85,11 @@ public static class PolicyEndpoints
 
     public static async Task<IResult> CreatePolicy(UpsertAccessPolicyRequest request, AppDbContext context, CancellationToken ct)
     {
+        if (request.RoleId == Guid.Empty)
+        {
+            return Results.BadRequest(new { Message = "Please select a valid target role." });
+        }
+
         var role = await context.Roles.FindAsync(new object[] { request.RoleId }, ct);
         if (role is null)
         {
@@ -75,13 +101,20 @@ public static class PolicyEndpoints
             return Results.BadRequest(new { Message = timeError });
         }
 
+        var ips = request.AllowedIpRanges ?? [];
+        if (ips.Count == 0) ips.Add("*");
+
+        var countries = request.AllowedCountries ?? [];
+        if (countries.Count == 0) countries.Add("*");
+
         var policy = new AccessPolicy
         {
             PolicyId = Guid.NewGuid(),
             RoleId = request.RoleId,
-            AllowedDepartment = request.AllowedDepartment?.Trim() ?? string.Empty,
-            AllowedIpRanges = request.AllowedIpRanges ?? [],
-            AllowedCountries = request.AllowedCountries ?? [],
+            Role = role,
+            AllowedDepartment = string.IsNullOrWhiteSpace(request.AllowedDepartment) ? "*" : request.AllowedDepartment.Trim(),
+            AllowedIpRanges = ips,
+            AllowedCountries = countries,
             TimeWindow = timeWindow,
             IsActive = request.IsActive
         };
@@ -89,12 +122,16 @@ public static class PolicyEndpoints
         context.AccessPolicies.Add(policy);
         await context.SaveChangesAsync(ct);
 
-        policy.Role = role;
         return Results.Created($"/api/policies/{policy.PolicyId}", AccessPolicyDto.FromEntity(policy));
     }
 
     public static async Task<IResult> UpdatePolicy(Guid id, UpsertAccessPolicyRequest request, AppDbContext context, CancellationToken ct)
     {
+        if (request.RoleId == Guid.Empty)
+        {
+            return Results.BadRequest(new { Message = "Please select a valid target role." });
+        }
+
         var policy = await context.AccessPolicies
             .Include(p => p.Role)
             .FirstOrDefaultAsync(p => p.PolicyId == id, ct);
@@ -115,10 +152,17 @@ public static class PolicyEndpoints
             return Results.BadRequest(new { Message = timeError });
         }
 
+        var ips = request.AllowedIpRanges ?? [];
+        if (ips.Count == 0) ips.Add("*");
+
+        var countries = request.AllowedCountries ?? [];
+        if (countries.Count == 0) countries.Add("*");
+
         policy.RoleId = request.RoleId;
-        policy.AllowedDepartment = request.AllowedDepartment?.Trim() ?? string.Empty;
-        policy.AllowedIpRanges = request.AllowedIpRanges ?? [];
-        policy.AllowedCountries = request.AllowedCountries ?? [];
+        policy.Role = role;
+        policy.AllowedDepartment = string.IsNullOrWhiteSpace(request.AllowedDepartment) ? "*" : request.AllowedDepartment.Trim();
+        policy.AllowedIpRanges = ips;
+        policy.AllowedCountries = countries;
         policy.TimeWindow = timeWindow;
         policy.IsActive = request.IsActive;
 
@@ -147,7 +191,7 @@ public static class PolicyEndpoints
             start < TimeSpan.Zero || start >= TimeSpan.FromDays(1) ||
             end < TimeSpan.Zero || end >= TimeSpan.FromDays(1))
         {
-            error = "StartTime and EndTime must both be valid times in the range 00:00 through 23:59.";
+            error = "Shift StartTime and EndTime must both be valid times (e.g. 08:00 to 17:00), or both left blank for 24/7 unrestricted access.";
             return false;
         }
 

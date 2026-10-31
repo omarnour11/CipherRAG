@@ -33,19 +33,37 @@ const suggestions = [
 let conversations = [];
 let activeId = null;
 let busy = false;
+let currentChatUserId = null;
 
-export function loadState() {
+function getStorageKey() {
+  return currentChatUserId
+    ? `cipherrag.conversations.v1.${currentChatUserId}`
+    : 'cipherrag.conversations.v1';
+}
+
+export function loadState(user = null) {
+  if (user && (user.userId || user.email)) {
+    currentChatUserId = String(user.userId || user.email).toLowerCase();
+  } else if (user === null && arguments.length > 0) {
+    currentChatUserId = null;
+    conversations = [];
+    activeId = null;
+    return;
+  }
+
   try {
-    conversations = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+    const raw = localStorage.getItem(getStorageKey());
+    conversations = raw ? JSON.parse(raw) : [];
   } catch {
     conversations = [];
   }
   if (!conversations.length) createConversation();
+  else activeId = conversations[0].id;
 }
 
 function persist() {
   conversations = conversations.slice(-MAX_CONVOS);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
+  localStorage.setItem(getStorageKey(), JSON.stringify(conversations));
 }
 
 function createConversation() {
@@ -79,7 +97,7 @@ export function renderChatView(container, setTopbar) {
         <div class="chat-messages" id="chatMessages"></div>
         <div class="composer-area">
           <div class="composer">
-            <textarea id="chatInput" placeholder="Ask anything against the knowledge base…  (Enter to send, Shift+Enter for newline)" rows="1"></textarea>
+            <textarea id="chatInput" placeholder="Ask anything against the knowledge baseâ€¦  (Enter to send, Shift+Enter for newline)" rows="1"></textarea>
             <div class="composer-footer">
               <div class="composer-hint">
                 ${icon('shield', 12)}
@@ -167,7 +185,7 @@ function renderConvoList() {
     return `<button class="convo-item ${c.id === activeId ? 'active' : ''}" data-id="${c.id}">
       <div class="c-info">
         <div class="c-title">${escapeHtml(c.title)}</div>
-        <div class="c-meta">${timeAgo(c.createdAt)} · ${escapeHtml(truncateStr(summary, 46))}</div>
+        <div class="c-meta">${timeAgo(c.createdAt)} Â· ${escapeHtml(truncateStr(summary, 46))}</div>
       </div>
       ${flagged ? `<span class="c-badge flagged">FLAG</span>` : ''}
       ${c.id === activeId ? `<span class="icon-btn c-del" style="width:22px;height:22px">${icon('x', 12)}</span>` : ''}
@@ -177,7 +195,7 @@ function renderConvoList() {
 
 function truncateStr(s, n) {
   s = s.replace(/\s+/g, ' ').trim();
-  return s.length > n ? s.slice(0, n) + '…' : s;
+  return s.length > n ? s.slice(0, n) + 'â€¦' : s;
 }
 
 function renderMessages() {
@@ -235,7 +253,7 @@ function renderMessage(m, idx) {
 
   let content = '';
   if (m.blocked) {
-    content = `<div class="alert-head">${icon('alert', 15)} SECURITY ALERT — Query Blocked</div>
+    content = `<div class="alert-head">${icon('alert', 15)} SECURITY ALERT â€” Query Blocked</div>
       <div class="msg-content" style="padding:0">${renderMarkdown(m.text)}</div>`;
   } else {
     content = `<div class="msg-content">${renderMarkdown(m.text)}</div>`;
@@ -244,7 +262,7 @@ function renderMessage(m, idx) {
   const sourcesHtml = m.sources && m.sources.length
     ? `<div class="sources">
         <div class="sources-header">
-          <span>${icon('link', 13)} Sources · ${m.sources.length} retrieved</span>
+          <span>${icon('link', 13)} Sources Â· ${m.sources.length} retrieved</span>
           <span>${icon('chevron', 12)}</span>
         </div>
         <div class="sources-body" style="display:none">
@@ -272,7 +290,7 @@ function renderMessage(m, idx) {
 
   const securityHtml = `<div class="security-panel ${verdictInfo.tone === 'danger' ? 'critical' : ''}">
     <div class="security-head">
-      <span class="sec-title">${icon('shield', 13)} Security evaluation · ${escapeHtml(verdictInfo.label)}</span>
+      <span class="sec-title">${icon('shield', 13)} Security evaluation Â· ${escapeHtml(verdictInfo.label)}</span>
       <span style="display:flex;align-items:center;gap:8px">
         <span class="badge badge-${verdictInfo.tone}">${riskPercent(sec.compositeRiskScore)}% risk</span>
         <span>${icon('chevron', 12)}</span>
@@ -349,7 +367,7 @@ async function submitMessage(text) {
     convo.messages.push({
       role: 'assistant',
       text: data.finalAnswer || '',
-      // rawPrompt intentionally NOT stored — server-side only (HIPAA §164.312)
+      // rawPrompt intentionally NOT stored â€” server-side only (HIPAA Â§164.312)
       maskedPrompt: data.maskedPrompt || '',
       sources: data.retrievedChunks || [],
       security: sec,
