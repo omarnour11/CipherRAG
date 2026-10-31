@@ -37,7 +37,6 @@ public class TokenProvider(IConfiguration configuration, IAppDbContext context) 
         {
             new(JwtRegisteredClaimNames.Sub, user.UserId.ToString()),
             new(ClaimTypes.NameIdentifier, user.UserId.ToString()),
-            new("sub", user.UserId.ToString()),
             new(JwtRegisteredClaimNames.Email, user.Email ?? string.Empty),
             new(ClaimTypes.Email, user.Email ?? string.Empty),
             new(ClaimTypes.Role, user.RoleName),

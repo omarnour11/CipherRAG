@@ -176,6 +176,15 @@ builder.Services.AddAuthentication(options =>
         {
             if (context.Principal?.Identity is ClaimsIdentity identity)
             {
+                var subClaim = identity.FindFirst("sub") ?? identity.FindFirst(ClaimTypes.NameIdentifier);
+                if (subClaim != null)
+                {
+                    if (!identity.HasClaim(ClaimTypes.NameIdentifier, subClaim.Value))
+                        identity.AddClaim(new Claim(ClaimTypes.NameIdentifier, subClaim.Value));
+                    if (!identity.HasClaim("sub", subClaim.Value))
+                        identity.AddClaim(new Claim("sub", subClaim.Value));
+                }
+
                 var roleClaims = identity.FindAll("role").Concat(identity.FindAll(ClaimTypes.Role)).ToList();
                 foreach (var rc in roleClaims)
                 {

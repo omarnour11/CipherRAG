@@ -31,12 +31,21 @@ function setApiBaseUrl(url) {
 }
 
 function getAccessToken() {
-  return localStorage.getItem(ACCESS_TOKEN_KEY);
+  if (typeof localStorage === 'undefined') return null;
+  const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+  if (!token || token === 'undefined' || token === 'null' || !token.trim()) {
+    return null;
+  }
+  return token.trim();
 }
 
 function setAccessToken(token) {
-  if (token) localStorage.setItem(ACCESS_TOKEN_KEY, token);
-  else localStorage.removeItem(ACCESS_TOKEN_KEY);
+  if (typeof localStorage === 'undefined') return;
+  if (token && token !== 'undefined' && token !== 'null') {
+    localStorage.setItem(ACCESS_TOKEN_KEY, token.trim());
+  } else {
+    localStorage.removeItem(ACCESS_TOKEN_KEY);
+  }
 }
 
 async function request(path, options = {}) {
