@@ -20,10 +20,9 @@ public class AccessPolicyConfiguration : IEntityTypeConfiguration<AccessPolicy>
         builder.Property(x => x.AllowedCountries);
 
         builder.Property(x => x.IsActive)
-               .HasColumnType("BIT")
                .IsRequired();
 
-       builder.OwnsOne(x => x.TimeWindow); 
+        builder.OwnsOne(x => x.TimeWindow);
 
         builder.HasOne(x => x.Role)
                .WithMany(r => r.AccessPolicies)

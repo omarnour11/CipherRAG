@@ -8,42 +8,32 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
 {
     public void Configure(EntityTypeBuilder<User> builder)
     {
+        builder.ToTable("Users");
 
-        builder.HasKey(x=> x.UserId);
-        builder.Property(x=>x.UserId).ValueGeneratedNever();
+        builder.HasKey(x => x.UserId);
+        builder.Property(x => x.UserId).ValueGeneratedNever();
 
-        builder.Property(x=> x.FullName)
-               .HasColumnType("VARCHAR")
+        builder.Property(x => x.FullName)
                .HasMaxLength(255)
                .IsRequired();
 
-        builder.Property(x=> x.Email)
-                .HasColumnType("VARCHAR")
-                .HasMaxLength(255)
-                .IsRequired();
-        builder.HasIndex(x=>x.Email).IsUnique();
+        builder.Property(x => x.Email)
+               .HasMaxLength(255)
+               .IsRequired();
 
+        builder.HasIndex(x => x.Email).IsUnique();
 
+        builder.Property(x => x.Department)
+               .HasMaxLength(100);
 
-        builder.Property(x=> x.Department)
-                .HasColumnType("VARCHAR")
-                .HasMaxLength(20);
-                
-        //relations
-
-        builder.HasMany(x=> x.RefreshTokens)
-               .WithOne(u=>u.User)
-               .HasForeignKey(x=>x.UserId)
+        builder.HasMany(x => x.RefreshTokens)
+               .WithOne(u => u.User)
+               .HasForeignKey(x => x.UserId)
                .OnDelete(DeleteBehavior.Cascade);
 
-       builder.HasMany(x=>x.Documents)
-              .WithOne(u=>u.User)
-              .HasForeignKey(x=>x.UserId)
-              .OnDelete(DeleteBehavior.Restrict);
-        builder.ToTable("Users");
-
-
-
+        builder.HasMany(x => x.Documents)
+               .WithOne(u => u.User)
+               .HasForeignKey(x => x.UserId)
+               .OnDelete(DeleteBehavior.Restrict);
     }
-
 }

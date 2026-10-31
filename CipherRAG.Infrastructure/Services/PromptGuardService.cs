@@ -17,6 +17,9 @@ public class PromptGuardService : IGuardrailService
     private readonly IConfiguration _configuration;
     private readonly ILogger<PromptGuardService> _logger;
 
+    private static DateTimeOffset _circuitBreakerUntilUtc = DateTimeOffset.MinValue;
+    private static readonly object _circuitLock = new();
+
     public PromptGuardService(
         HttpClient httpClient,
         IConfiguration configuration,
@@ -45,11 +48,11 @@ public class PromptGuardService : IGuardrailService
 
         string queryHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rawPrompt)));
 
-        // 1️⃣ Tier 1: Fast Rule & Heuristic Scanner
+        // 1️⃣ Tier 1: Fast Rule & Heuristic Scanner (Zero latency, runs offline in cloud)
         decimal patternScore = ScanRulePatterns(rawPrompt);
 
-        // 2️⃣ Tier 2: Dedicated AI Prompt Guard Model (Llama-Guard 3 via Ollama)
-        decimal mlModelScore = await CallPromptGuardModelApiAsync(maskedPrompt, ct);
+        // 2️⃣ Tier 2: Dedicated AI Prompt Guard Model (Llama-Guard 3 via Ollama or resilient offline ML heuristic)
+        decimal mlModelScore = await CallPromptGuardModelApiAsync(maskedPrompt, patternScore, ct);
 
         // 3️⃣ Tier 3: LLM Judge Intent & Structure Evaluation
         decimal llmJudgeScore = EvaluateLlmJudgeRisk(rawPrompt, patternScore, mlModelScore);
@@ -66,11 +69,11 @@ public class PromptGuardService : IGuardrailService
         assessment.CompositeRiskScore = Math.Round(assessment.ComputeComposite(), 2);
 
         // Determine Final Risk Verdict
-        if (assessment.CompositeRiskScore >= 0.70m || patternScore >= 0.9m || mlModelScore >= 0.85m)
+        if (assessment.CompositeRiskScore >= 0.70m || patternScore >= 0.85m || mlModelScore >= 0.85m)
         {
             assessment.Verdict = RiskVerdict.Critical;
         }
-        else if (assessment.CompositeRiskScore >= 0.50m)
+        else if (assessment.CompositeRiskScore >= 0.50m || patternScore >= 0.60m)
         {
             assessment.Verdict = RiskVerdict.HighRisk;
         }
@@ -118,14 +121,24 @@ public class PromptGuardService : IGuardrailService
     }
 
     private static readonly Regex FallbackInjectionPattern = new(
-        @"(ignore|disregard|forget|bypass|override|cancel|تجاهل|تجاوز|الغاء|إلغاء|انسى|أنسى|فكك|سيبك|امسح|الغي|ألغي).*?(instruction|instructions|insteraction|insteractions|rule|rules|prompt|prompts|system|guideline|guidelines|guardrail|security|filter|policy|التعليمات|الأوامر|الاوامر|القواعد|السياسات|النظام|الحماية|التعليمات\s+ال\s+فاتت|التعليمات\s+الفاتت|كل\s+اللي\s+فات|اللي\s+فات)",
+        @"(?:ignore|disregard|forget|bypass|override|cancel|dismiss|neglect|reset|drop|disable|clear|stop|skip|do not follow|تجاهل|تجاوز|الغاء|إلغاء|انسى|أنسى|انسالي|أنسالي|فكك|سيبك|امسح|الغي|ألغي|تخطى|تخطي|اترك|بطل|وقف|طنش)" +
+        @".{0,60}?" +
+        @"(?:instruction|instructions|insteraction|insteractions|rule|rules|prompt|prompts|system|guideline|guidelines|guardrail|guardrails|security|filter|filters|policy|policies|limitations|restrictions|bounds|boundaries|constraints|morals|(?:ال)?تعليمات|(?:ال)?أوامر|(?:ال)?اوامر|(?:ال)?قواعد|(?:ال)?سياسات|(?:ال)?نظام|(?:ال)?حماية|(?:ال)?قيود|(?:ال)?فلاتر|(?:ال)?شروط|(?:ال)?ارشادات|(?:ال)?إرشادات|التعليمات\s+ال\s+فاتت|التعليمات\s+الفاتت|كل\s+اللي\s+فات|اللي\s+فات|ما\s+سبق|السابقة|المفروضة)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static readonly Regex FallbackAttackKeywordsPattern = new(
-        @"(?:jailbreak|dan\s+mode|developer\s+mode|unfiltered\s+ai|reveal\s+system\s+prompt|system\s+prompt|raw\s+prompt|repeat\s+the\s+exact|repeat\s+above|repeat\s+text|system\s+override|(?:give|provide|share|show|reveal|tell|send|export|dump).{0,40}(?:your|the|all|any)?\s*(?:sensitive|private|secret|confidential|personal|protected)\s+(?:data|information|details|records|files|documents|prompts|secrets)|جليبريك|وضع\s+المطور|تجاوز\s+الحماية|كشف\s+البرومبت)",
+        @"(?:jailbreak|dan\s+mode|developer\s+mode|aim\s+mode|unfiltered\s+ai|unrestricted|evil\s+bot|do\s+anything\s+now|anti-censorship|hypothetical\s+scenario|no\s+rules|no\s+limits|chaos\s+mode|bypass\s+mode|uncensored\s+mode|uncensored|developer\s+prompt|system\s+prompt|raw\s+prompt|initial\s+prompt|reveal.{0,30}?(?:system|prompt|instructions)|show.{0,30}?(?:system|developer|prompt|instructions)|print.{0,30}?(?:system|prompt|instructions)|what\s+is\s+your.{0,20}?(?:prompt|system|instructions)|what\s+were\s+your\s+instructions|what\s+were\s+the\s+rules|repeat\s+(?:the\s+)?exact|repeat\s+above|repeat\s+text|system\s+override|dump\s+prompt|dump\s+all|export\s+database|export\s+database\s+tables|(?:give|provide|share|show|reveal|tell|send|export|dump|leak).{0,50}?(?:all\s+)?(?:patient\s+(?:records|files)|database|tables|secrets|api\s+keys|credentials|passwords|hashes|private\s+keys|(?:your|the|all|any)?\s*(?:sensitive|private|secret|confidential|personal|protected)\s+(?:medical\s+)?(?:data|information|details|records|files|documents|prompts|secrets|keys))|جليبريك|جيلبريك|وضع\s+المطور|تجاوز\s+الحماية|كشف\s+البرومبت|كسر\s+الحماية|دون\s+قيود|بلا\s+حدود|اظهر\s+(?:ال)?برومبت|أظهر\s+(?:ال)?برومبت|اكشف\s+(?:ال)?برومبت|اطبع\s+(?:ال)?تعليمات|اطبع\s+(?:ال)?اوامر|اعرض\s+(?:ال)?اوامر|اعرض.{0,20}?(?:ال)?برومبت|كشف\s+(?:ال)?نظام|ما\s+هي\s+تعليماتك|ما\s+هو\s+البرومبت|ما\s+هي\s+القواعد|هات\s+كل\s+السجلات|تسريب\s+بيانات|(?:تسريب|سرقة|تصدير|كشف|هات|اعطني|عرض|اطبع).{0,40}?(?:بيانات\s+المرضى|(?:ال)?سجلات\s+(?:الطبية|المحمية|المرضى)|الملفات\s+السرية|قاعدة\s+البيانات|كلمات\s+المرور|السياسات\s+البرمجية))",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    private decimal ScanRulePatterns(string prompt)
+    private static readonly Regex DelimiterInjectionPattern = new(
+        @"(?:\[system\]|<\|im_start\|>|<\|im_end\|>|<\|endoftext\|>|###\s*system|###\s*instruction|###\s*human|\[assistant\]|<system>|<\/system>|\bhuman:\s*|\bassistant:\s*)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex CodeAndSqlInjectionPattern = new(
+        @"(?:<script|drop\s+table|exec\s*\(|union\s+select|insert\s+into|delete\s+from\s+|information_schema|xp_cmdshell|system\s*\(|base64_decode)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    public decimal ScanRulePatterns(string prompt)
     {
         if (string.IsNullOrWhiteSpace(prompt)) return 0.0m;
 
@@ -133,52 +146,62 @@ public class PromptGuardService : IGuardrailService
         var injectionPattern = GetInjectionPattern();
         var attackPattern = GetAttackKeywordsPattern();
 
-        // 1. Dynamic Rule Matching via Config-driven Regex
+        // 1. Dynamic Rule Matching via Config-driven / Fallback Regex
         if (injectionPattern.IsMatch(lower) || attackPattern.IsMatch(lower))
         {
             return 1.0m;
         }
 
-        // 2. Code Execution & Injection Payloads
-        if (lower.Contains("<script>") || lower.Contains("drop table") || lower.Contains("exec(") || lower.Contains("system("))
+        // 2. Delimiter & Chat Template Hijacking
+        if (DelimiterInjectionPattern.IsMatch(lower))
         {
-            return 0.85m;
+            return 0.95m;
         }
 
-        // 3. Base64 Obfuscation Decoder Inspection
-        string trimmed = prompt.Trim();
-        if (trimmed.Length >= 12 && (trimmed.EndsWith("==") || trimmed.EndsWith("=")))
+        // 3. Code Execution & SQL Injection Payloads
+        if (CodeAndSqlInjectionPattern.IsMatch(lower))
+        {
+            return 0.90m;
+        }
+
+        // 4. Base64 Obfuscation Decoder Inspection
+        var base64Candidates = Regex.Matches(prompt, @"[A-Za-z0-9+/=]{16,}");
+        foreach (Match match in base64Candidates)
         {
             try
             {
-                byte[] decodedBytes = Convert.FromBase64String(trimmed);
+                byte[] decodedBytes = Convert.FromBase64String(match.Value);
                 string decodedStr = Encoding.UTF8.GetString(decodedBytes).ToLowerInvariant();
-                if (injectionPattern.IsMatch(decodedStr) || attackPattern.IsMatch(decodedStr))
+                if (injectionPattern.IsMatch(decodedStr) || attackPattern.IsMatch(decodedStr) ||
+                    DelimiterInjectionPattern.IsMatch(decodedStr) || CodeAndSqlInjectionPattern.IsMatch(decodedStr))
                 {
                     return 1.0m;
                 }
             }
-            catch (FormatException)
+            catch
             {
-                _logger.LogDebug("Prompt did not contain a valid Base64 payload.");
+                // Not valid base64 payload, continue
             }
         }
 
         return 0.0m;
     }
 
-    // TODO [PRODUCTION ROADMAP]:
-    // Currently targeting local Ollama Llama-Guard 3 (http://localhost:11434/api/generate) with local ML heuristic fallback.
-    // For Production Deployment:
-    // 1. Configure primary & failover endpoints (e.g. Azure Content Safety Prompt Shield / AWS Bedrock Guardrails).
-    // 2. Export flagged security alerts directly to SIEM / Serilog (ElasticSearch, Datadog, or Azure Monitor).
-    // 3. Enable asynchronous background audit logging for incident response tracking.
-    private async Task<decimal> CallPromptGuardModelApiAsync(string prompt, CancellationToken ct)
+    private async Task<decimal> CallPromptGuardModelApiAsync(string prompt, decimal patternScore, CancellationToken ct)
     {
-        string? guardrailUrl = _configuration["Guardrail:ApiUrl"]; // e.g. "http://localhost:11434/api/generate" or Azure Content Safety
+        string? guardrailUrl = _configuration["Guardrail:ApiUrl"];
         string? modelName = _configuration["Guardrail:Model"] ?? "llama-guard3";
 
-        if (!string.IsNullOrWhiteSpace(guardrailUrl))
+        bool skipRemoteCall = false;
+        lock (_circuitLock)
+        {
+            if (DateTimeOffset.UtcNow < _circuitBreakerUntilUtc)
+            {
+                skipRemoteCall = true;
+            }
+        }
+
+        if (!skipRemoteCall && !string.IsNullOrWhiteSpace(guardrailUrl))
         {
             try
             {
@@ -189,7 +212,8 @@ public class PromptGuardService : IGuardrailService
                     stream = false
                 };
 
-                using var guardCts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+                // Fast 1.5s timeout prevents blocking cloud requests when local Ollama is absent
+                using var guardCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(1500));
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, guardCts.Token);
                 var response = await _httpClient.PostAsJsonAsync(guardrailUrl, payload, linkedCts.Token);
                 if (response.IsSuccessStatusCode)
@@ -219,13 +243,23 @@ public class PromptGuardService : IGuardrailService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "[PromptGuard] Llama-Guard endpoint error/timeout. Falling back to rule-based engine.");
+                lock (_circuitLock)
+                {
+                    // Open circuit breaker for 5 minutes to avoid lagging subsequent user queries
+                    _circuitBreakerUntilUtc = DateTimeOffset.UtcNow.AddMinutes(5);
+                }
+                _logger.LogWarning(ex, "[PromptGuard] Remote model endpoint unreachable or timed out. Circuit breaker tripped for 5 mins; using offline heuristics.");
             }
         }
 
-        // Local ML Anomaly Classifier Heuristic Fallback
-        // Exclude masking placeholder characters ([], _) from punctuation ratio
-        // to avoid false positives on already-masked prompts (HIPAA de-identified content)
+        // Resilient Offline ML Heuristic Engine:
+        // If the rule engine already flagged high risk, maintain consistency in cloud mode
+        if (patternScore >= 0.8m)
+        {
+            return patternScore;
+        }
+
+        // Punctuation & Anomaly Ratio Analysis
         int nonAlphaNumeric = prompt.Count(c =>
             !char.IsLetterOrDigit(c) && !char.IsWhiteSpace(c) &&
             c != '[' && c != ']' && c != '_');
@@ -236,7 +270,7 @@ public class PromptGuardService : IGuardrailService
             return 0.70m;
         }
 
-        return 0.10m;
+        return 0.05m;
     }
 
     private static decimal EvaluateLlmJudgeRisk(string prompt, decimal patternScore, decimal mlModelScore)
@@ -245,7 +279,9 @@ public class PromptGuardService : IGuardrailService
             return 0.95m;
 
         string lower = prompt.ToLowerInvariant();
-        if (lower.Contains("developer mode") || lower.Contains("act as an unfiltered ai") || lower.Contains("reveal system prompt"))
+        if (lower.Contains("developer mode") || lower.Contains("act as an unfiltered ai") ||
+            lower.Contains("reveal system prompt") || lower.Contains("وضع المطور") ||
+            lower.Contains("كسر الحماية"))
         {
             return 0.85m;
         }

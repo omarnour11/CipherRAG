@@ -217,14 +217,21 @@ public static class PolicyEndpoints
 
     public static async Task<IResult> DeletePolicy(Guid id, AppDbContext context, CancellationToken ct)
     {
-        var policy = await context.AccessPolicies.FindAsync(new object[] { id }, ct);
+        var policy = await context.AccessPolicies.FirstOrDefaultAsync(p => p.PolicyId == id, ct);
         if (policy is null)
         {
             return Results.NotFound(new { Message = $"Access policy with ID {id} was not found." });
         }
 
-        context.AccessPolicies.Remove(policy);
-        await context.SaveChangesAsync(ct);
-        return Results.Ok(new { message = "Policy successfully deleted." });
+        try
+        {
+            context.AccessPolicies.Remove(policy);
+            await context.SaveChangesAsync(ct);
+            return Results.Ok(new { message = "Policy successfully deleted.", policyId = id });
+        }
+        catch (Exception ex)
+        {
+            return Results.BadRequest(new { Message = $"Could not delete policy: {ex.Message}" });
+        }
     }
 }

@@ -228,8 +228,12 @@ function renderUserTable(container) {
       if (!user) return;
       if (!confirm(`Are you sure you want to delete user '${user.fullName}' (${user.email})?`)) return;
       try {
-        await api.deleteUser(user.userId);
-        toast('User deleted successfully.', 'success');
+        const res = await api.deleteUser(user.userId);
+        if (res && res.deactivated) {
+          toast(res.message || 'User deactivated due to compliance logs.', 'warning');
+        } else {
+          toast(res?.message || 'User deleted successfully.', 'success');
+        }
         loadUsers();
       } catch (err) {
         toast(err.message || 'Delete failed.', 'error');
