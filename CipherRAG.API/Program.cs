@@ -28,14 +28,23 @@ if (!string.IsNullOrWhiteSpace(port))
     builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 }
 
-// Configure Database Connection (SQL Server)
+// Configure Database Connection: SQL Server if configured, or embedded SQLite fallback
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+var isSqlServer = !string.IsNullOrWhiteSpace(connectionString) &&
+                  !connectionString.Contains("...") &&
+                  !connectionString.EndsWith(".db", StringComparison.OrdinalIgnoreCase) &&
+                  !connectionString.StartsWith("Data Source=cipherrag", StringComparison.OrdinalIgnoreCase);
 
 builder.Services.AddDbContext<AppDbContext>(options =>
 {
-    if (!string.IsNullOrWhiteSpace(connectionString))
+    if (isSqlServer)
     {
         options.UseSqlServer(connectionString);
+    }
+    else
+    {
+        var dbPath = Path.Combine(builder.Environment.ContentRootPath, "cipherrag.db");
+        options.UseSqlite($"Data Source={dbPath}");
     }
 });
 
@@ -287,24 +296,52 @@ app.UseStaticFiles(new StaticFileOptions
     }
 });
 
-// Database migrations and demo seed data (opt-in or triggered via config)
-if (app.Configuration.GetValue<bool>("Database:ApplyMigrationsOnStartup"))
+// Database initialization, migrations, and demo seed data
+using (var scope = app.Services.CreateScope())
 {
-    try
-    {
-        using var scope = app.Services.CreateScope();
-        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        await context.Database.MigrateAsync();
+    var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var logger = app.Services.GetRequiredService<ILogger<Program>>();
 
-        if (app.Configuration.GetValue<bool>("Database:SeedOnStartup"))
+    if (isSqlServer)
+    {
+        if (app.Configuration.GetValue<bool>("Database:ApplyMigrationsOnStartup", true))
         {
-            await DbInitializer.SeedAsync(context);
+            try
+            {
+                logger.LogInformation("Applying SQL Server migrations...");
+                await context.Database.MigrateAsync();
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to apply SQL Server migrations on startup. Verify ConnectionStrings:DefaultConnection.");
+            }
         }
     }
-    catch (Exception ex)
+    else
     {
-        var logger = app.Services.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "Failed to apply database migrations or seed data on startup. Verify ConnectionStrings:DefaultConnection.");
+        try
+        {
+            logger.LogInformation("No external SQL Server configured. Using embedded SQLite database (cipherrag.db).");
+            await context.Database.EnsureCreatedAsync();
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to initialize SQLite database.");
+        }
+    }
+
+    // Automatically seed demo accounts and initial data on startup
+    if (app.Configuration.GetValue<bool>("Database:SeedOnStartup", true))
+    {
+        try
+        {
+            await DbInitializer.SeedAsync(context);
+            logger.LogInformation("Database seeded with demo accounts (e.g. omar.nour@cipherrag.local).");
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to seed demo data on startup.");
+        }
     }
 }
 
