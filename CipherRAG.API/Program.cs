@@ -169,15 +169,38 @@ builder.Services.AddAuthentication(options =>
         NameClaimType = ClaimTypes.NameIdentifier,
         RoleClaimType = ClaimTypes.Role
     };
+
+    options.Events = new JwtBearerEvents
+    {
+        OnTokenValidated = context =>
+        {
+            if (context.Principal?.Identity is ClaimsIdentity identity)
+            {
+                var roleClaims = identity.FindAll("role").Concat(identity.FindAll(ClaimTypes.Role)).ToList();
+                foreach (var rc in roleClaims)
+                {
+                    if (!identity.HasClaim(ClaimTypes.Role, rc.Value))
+                    {
+                        identity.AddClaim(new Claim(ClaimTypes.Role, rc.Value));
+                    }
+                    if (!identity.HasClaim("role", rc.Value))
+                    {
+                        identity.AddClaim(new Claim("role", rc.Value));
+                    }
+                }
+            }
+            return Task.CompletedTask;
+        }
+    };
 });
 
 builder.Services.AddTransient<IAppDbContext, AppDbContext>();
 
 builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy("AdminPolicy", policy => policy.RequireRole("SystemAdmin", "Admin"));
-    options.AddPolicy("AuditViewPolicy", policy => policy.RequireRole("SystemAdmin", "Admin", "Auditor"));
-    options.AddPolicy("DocumentManagePolicy", policy => policy.RequireRole("SystemAdmin", "Admin", "User", "Doctor"));
+    options.AddPolicy("AdminPolicy", policy => policy.RequireRole("SystemAdmin", "Admin", "SecurityAnalyst"));
+    options.AddPolicy("AuditViewPolicy", policy => policy.RequireRole("SystemAdmin", "Admin", "Auditor", "ComplianceAuditor", "ExternalAuditor", "SecurityAnalyst"));
+    options.AddPolicy("DocumentManagePolicy", policy => policy.RequireRole("SystemAdmin", "Admin", "User", "Doctor", "SeniorPhysician", "ClinicalLead"));
 });
 
 builder.Services.AddOpenTelemetry()

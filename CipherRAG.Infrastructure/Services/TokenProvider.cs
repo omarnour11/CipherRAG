@@ -36,8 +36,12 @@ public class TokenProvider(IConfiguration configuration, IAppDbContext context) 
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub, user.UserId.ToString()),
+            new(ClaimTypes.NameIdentifier, user.UserId.ToString()),
+            new("sub", user.UserId.ToString()),
             new(JwtRegisteredClaimNames.Email, user.Email ?? string.Empty),
+            new(ClaimTypes.Email, user.Email ?? string.Empty),
             new(ClaimTypes.Role, user.RoleName),
+            new("role", user.RoleName),
             new("Department", user.Department ?? string.Empty),
             new("ClearanceLevel", user.ClearanceLevel.ToString()),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())

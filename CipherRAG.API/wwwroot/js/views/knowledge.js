@@ -4,7 +4,7 @@ import {
   truncate, setLoading, debounce, formatBytes
 } from '../utils.js';
 
-let docs = [];
+let allDocs = [];
 let page = 1;
 let pageSize = 12;
 let totalCount = 0;
@@ -12,6 +12,21 @@ let totalPages = 0;
 let filterSensitivity = -1;
 let filterApproval = -1;
 let searchTerm = '';
+
+function getSensNum(val) {
+  if (val === 0 || val === '0' || val === 'Public') return 0;
+  if (val === 1 || val === '1' || val === 'Internal') return 1;
+  if (val === 2 || val === '2' || val === 'Confidential') return 2;
+  if (val === 3 || val === '3' || val === 'Restricted') return 3;
+  return Number(val);
+}
+
+function getApprNum(val) {
+  if (val === 0 || val === '0' || val === 'Pending') return 0;
+  if (val === 1 || val === '1' || val === 'Approved') return 1;
+  if (val === 2 || val === '2' || val === 'Rejected') return 2;
+  return Number(val);
+}
 
 export function renderKnowledgeView(container, setTopbar) {
   setTopbar('Knowledge Base');
@@ -61,18 +76,21 @@ export function renderKnowledgeView(container, setTopbar) {
   searchInput.addEventListener('input', debounce(() => {
     searchTerm = searchInput.value.trim().toLowerCase();
     page = 1;
-    loadDocs();
-  }, 300));
+    const c = document.getElementById('docListContainer');
+    if (c) renderDocTable(c);
+  }, 250));
 
   container.querySelector('#docSensFilter').addEventListener('change', (e) => {
     filterSensitivity = Number(e.target.value);
     page = 1;
-    loadDocs();
+    const c = document.getElementById('docListContainer');
+    if (c) renderDocTable(c);
   });
   container.querySelector('#docApprovalFilter').addEventListener('change', (e) => {
     filterApproval = Number(e.target.value);
     page = 1;
-    loadDocs();
+    const c = document.getElementById('docListContainer');
+    if (c) renderDocTable(c);
   });
   container.querySelector('#docRefreshBtn').addEventListener('click', () => loadDocs());
   container.querySelector('#docUploadBtn').addEventListener('click', () => openUploadModal());
@@ -89,14 +107,9 @@ async function loadDocs() {
   </div>`;
 
   try {
-    const res = await api.getPagedDocuments(page, pageSize);
-    docs = [...res.items];
-    totalCount = res.totalCount;
-    totalPages = res.totalPages || 1;
+    const res = await api.getPagedDocuments(1, 200);
+    allDocs = Array.isArray(res?.items) ? [...res.items] : [];
     renderDocTable(container);
-    renderPagination();
-    const badge = document.getElementById('docCountBadge');
-    if (badge) badge.textContent = `${totalCount} total`;
   } catch (err) {
     container.innerHTML = `<div class="empty-state">
       ${icon('alert', 30)}
@@ -107,26 +120,47 @@ async function loadDocs() {
 }
 
 function renderDocTable(container) {
-  let filtered = docs;
+  let filtered = allDocs;
+
   if (searchTerm) {
     filtered = filtered.filter(d =>
-      d.title.toLowerCase().includes(searchTerm) ||
-      d.department.toLowerCase().includes(searchTerm));
+      (d.title || '').toLowerCase().includes(searchTerm) ||
+      (d.department || '').toLowerCase().includes(searchTerm));
   }
+
+  if (filterSensitivity !== -1) {
+    filtered = filtered.filter(d => getSensNum(d.sensitivityLevel) === filterSensitivity);
+  }
+
+  if (filterApproval !== -1) {
+    filtered = filtered.filter(d => getApprNum(d.approvalStatus) === filterApproval);
+  }
+
+  totalCount = filtered.length;
+  totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  if (page > totalPages) page = totalPages;
+
+  const badge = document.getElementById('docCountBadge');
+  if (badge) badge.textContent = `${totalCount} total`;
+
+  renderPagination();
 
   if (!filtered.length) {
     container.innerHTML = `<div class="empty-state">
       ${icon('library', 30)}
       <h3>No documents found</h3>
-      <p>Upload a file or add a document to start building the knowledge base.</p>
+      <p>No documents match the current search or filter criteria.</p>
       <button class="btn btn-primary" onclick="document.getElementById('docUploadBtn')?.click()">${icon('upload', 14)} Upload file</button>
     </div>`;
     return;
   }
 
-  const rows = filtered.map(d => {
-    const sens = SENSITIVITY[d.sensitivityLevel] || SENSITIVITY[1];
-    const appr = APPROVAL[d.approvalStatus] || APPROVAL[0];
+  const start = (page - 1) * pageSize;
+  const pagedItems = filtered.slice(start, start + pageSize);
+
+  const rows = pagedItems.map(d => {
+    const sens = SENSITIVITY[getSensNum(d.sensitivityLevel)] || SENSITIVITY[1];
+    const appr = APPROVAL[getApprNum(d.approvalStatus)] || APPROVAL[0];
     return `<tr>
       <td>
         <div style="display:flex;align-items:center;gap:10px">
@@ -196,7 +230,11 @@ function renderPagination() {
   host.querySelectorAll('.page-btn[data-page]').forEach(btn => {
     btn.addEventListener('click', () => {
       const p = Number(btn.dataset.page);
-      if (p >= 1 && p <= totalPages) { page = p; loadDocs(); }
+      if (p >= 1 && p <= totalPages) {
+        page = p;
+        const c = document.getElementById('docListContainer');
+        if (c) renderDocTable(c);
+      }
     });
   });
 }
@@ -397,8 +435,8 @@ async function viewDocument(id) {
 
   try {
     const doc = await api.getDocument(id);
-    const sens = SENSITIVITY[doc.sensitivityLevel] || SENSITIVITY[1];
-    const appr = APPROVAL[doc.approvalStatus] || APPROVAL[0];
+    const sens = SENSITIVITY[getSensNum(doc.sensitivityLevel)] || SENSITIVITY[1];
+    const appr = APPROVAL[getApprNum(doc.approvalStatus)] || APPROVAL[0];
     const body = host.querySelector('.drawer-body');
     body.innerHTML = `
       <div>

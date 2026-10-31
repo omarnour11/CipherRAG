@@ -1,10 +1,10 @@
-import { api, ApiError } from './api.js?v=20261031_1';
-import { icon, toast } from './utils.js?v=20261031_1';
-import { renderChatView, loadState as loadChatState } from './views/chat.js?v=20261031_1';
-import { renderKnowledgeView } from './views/knowledge.js?v=20261031_1';
-import { renderAuditView } from './views/audit.js?v=20261031_1';
-import { renderUsersView } from './views/users.js?v=20261031_1';
-import { renderPoliciesView } from './views/policies.js?v=20261031_1';
+import { api, ApiError } from './api.js?v=20261031_2';
+import { icon, toast } from './utils.js?v=20261031_2';
+import { renderChatView, loadState as loadChatState } from './views/chat.js?v=20261031_2';
+import { renderKnowledgeView } from './views/knowledge.js?v=20261031_2';
+import { renderAuditView } from './views/audit.js?v=20261031_2';
+import { renderUsersView } from './views/users.js?v=20261031_2';
+import { renderPoliciesView } from './views/policies.js?v=20261031_2';
 
 let currentUser = null;
 let viewContainer = null;
@@ -169,9 +169,24 @@ function showLogin() {
 function enterApp(me) {
   document.body.classList.add('authenticated');
   updateUserCard(me);
+  updateNavVisibility(me);
   loadChatState();
   switchView('chat');
   checkHealth();
+}
+
+function updateNavVisibility(me) {
+  const role = (me?.roleName || '').toLowerCase();
+  const isAdmin = role.includes('admin') || role.includes('analyst');
+  const isAuditor = isAdmin || role.includes('audit');
+
+  const auditBtn = document.querySelector('.nav-item[data-view="audit"]');
+  const usersBtn = document.querySelector('.nav-item[data-view="users"]');
+  const policiesBtn = document.querySelector('.nav-item[data-view="policies"]');
+
+  if (auditBtn) auditBtn.style.display = isAuditor ? '' : 'none';
+  if (usersBtn) usersBtn.style.display = isAdmin ? '' : 'none';
+  if (policiesBtn) policiesBtn.style.display = isAdmin ? '' : 'none';
 }
 
 function updateUserCard(me) {
@@ -182,6 +197,18 @@ function updateUserCard(me) {
 }
 
 function switchView(view) {
+  const role = (currentUser?.roleName || '').toLowerCase();
+  const isAdmin = role.includes('admin') || role.includes('analyst');
+  const isAuditor = isAdmin || role.includes('audit');
+
+  if ((view === 'policies' || view === 'users') && !isAdmin) {
+    toast('Access restricted: Only administrators can access this section.', 'warning');
+    view = 'chat';
+  } else if (view === 'audit' && !isAuditor) {
+    toast('Access restricted: You do not have permission to view the audit trail.', 'warning');
+    view = 'chat';
+  }
+
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   const navItem = document.querySelector(`.nav-item[data-view="${view}"]`);
   if (navItem) navItem.classList.add('active');

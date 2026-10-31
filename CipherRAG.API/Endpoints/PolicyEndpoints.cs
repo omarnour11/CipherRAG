@@ -15,7 +15,7 @@ public static class PolicyEndpoints
     {
         var group = app.MapGroup("/api/policies")
                        .WithTags("AccessPolicies")
-                       .RequireAuthorization();
+                       .RequireAuthorization("AdminPolicy");
 
         group.MapGet("/", GetAllPolicies)
              .WithName("GetAllPolicies");
