@@ -35,6 +35,8 @@ public class GlobalExceptionHandler : IExceptionHandler
             KeyNotFoundException ex => (StatusCodes.Status404NotFound, "Resource Not Found", ex.Message),
             UnauthorizedAccessException ex => (StatusCodes.Status401Unauthorized, "Unauthorized Access", ex.Message),
             ArgumentException ex => (StatusCodes.Status400BadRequest, "Bad Request", ex.Message),
+            InvalidOperationException ex when ex.Message.Contains("No database provider") || ex.Message.Contains("ConnectionString property has not been initialized")
+                => (StatusCodes.Status500InternalServerError, "Database Not Configured", "Database connection string is missing. Please set 'ConnectionStrings__DefaultConnection' in Render Environment Variables."),
             InvalidOperationException ex => (StatusCodes.Status400BadRequest, "Invalid Operation", ex.Message),
             _ => (StatusCodes.Status500InternalServerError, "An unexpected error occurred", "An internal server error occurred while processing your request.")
         };

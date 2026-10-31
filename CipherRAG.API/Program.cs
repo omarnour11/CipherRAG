@@ -133,6 +133,7 @@ var jwtKey = builder.Configuration["Jwt:Key"];
 if (string.IsNullOrWhiteSpace(jwtKey) || jwtKey.Length < 32)
 {
     jwtKey = "CipherRAG_Default_Secure_Key_For_Cloud_Deployment_Min_32_Chars_2026!";
+    builder.Configuration["Jwt:Key"] = jwtKey;
     Log.Warning("Using fallback JWT signing key. For production security, set the 'Jwt__Key' environment variable.");
 }
 
