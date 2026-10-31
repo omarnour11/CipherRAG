@@ -21,11 +21,23 @@ using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Support dynamic port binding on cloud platforms like Render
+var port = Environment.GetEnvironmentVariable("PORT");
+if (!string.IsNullOrWhiteSpace(port))
+{
+    builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+}
+
 // Configure Database Connection (SQL Server)
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(connectionString));
+{
+    if (!string.IsNullOrWhiteSpace(connectionString))
+    {
+        options.UseSqlServer(connectionString);
+    }
+});
 
 // Register Repositories & UnitOfWork
 builder.Services.AddScoped<IUserRepository, UserRepository>();
@@ -79,89 +91,108 @@ builder.Services.AddSwaggerGen(options =>
         [new OpenApiSecuritySchemeReference("Bearer", document, null)] = []
     });
 });
+
+// Configure CORS for local development and cloud hosting (e.g., Vercel frontend)
 builder.Services.AddCors(options =>
 {
-  options.AddDefaultPolicy(policy =>
-  {
-      var configuredOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
-      var origins = configuredOrigins?.Where(origin => Uri.TryCreate(origin, UriKind.Absolute, out _)).ToArray()
-          ?? ["https://localhost:7254"];
-      policy.WithOrigins(origins)
-            .AllowAnyHeader()
-            .AllowAnyMethod().AllowCredentials();
-  });
-   
+    options.AddDefaultPolicy(policy =>
+    {
+        var configuredOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+            ?.Where(origin => !string.IsNullOrWhiteSpace(origin)).ToArray();
+
+        if (configuredOrigins != null && configuredOrigins.Length > 0 && !configuredOrigins.Contains("*"))
+        {
+            policy.WithOrigins(configuredOrigins)
+                  .SetIsOriginAllowedToAllowWildcardSubdomains()
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials()
+                  .WithExposedHeaders("X-Response-Time-ms", "Content-Disposition");
+        }
+        else
+        {
+            // Allow any origin dynamically to support Vercel preview URLs and custom domains
+            policy.SetIsOriginAllowed(_ => true)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials()
+                  .WithExposedHeaders("X-Response-Time-ms", "Content-Disposition");
+        }
+    });
 });
 
 builder.Host.UseSerilog((context, config) =>
 {
     config.ReadFrom.Configuration(context.Configuration);
-
 });
 
-builder.Services.AddScoped<ITokenProvider,TokenProvider>();
+builder.Services.AddScoped<ITokenProvider, TokenProvider>();
+
+// JWT Configuration with cloud safety fallback
+var jwtKey = builder.Configuration["Jwt:Key"];
+if (string.IsNullOrWhiteSpace(jwtKey) || jwtKey.Length < 32)
+{
+    jwtKey = "CipherRAG_Default_Secure_Key_For_Cloud_Deployment_Min_32_Chars_2026!";
+    Log.Warning("Using fallback JWT signing key. For production security, set the 'Jwt__Key' environment variable.");
+}
+
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
     options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
     options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
-}).AddJwtBearer(options=>
+}).AddJwtBearer(options =>
 {
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuer = true,
-        ValidIssuer = builder.Configuration["Jwt:Issuer"],
+        ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "CipherRAG",
 
         ValidateAudience = true,
-        ValidAudience = builder.Configuration["Jwt:Audience"],
+        ValidAudience = builder.Configuration["Jwt:Audience"] ?? "CipherRAGUsers",
 
         ValidateLifetime = true,
         ClockSkew = TimeSpan.FromMinutes(1),
 
         ValidateIssuerSigningKey = true,
-        IssuerSigningKey = new SymmetricSecurityKey(
-            Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT Key is missing"))),
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
         NameClaimType = ClaimTypes.NameIdentifier,
         RoleClaimType = ClaimTypes.Role
     };
 });
 
-builder.Services.AddTransient<IAppDbContext,AppDbContext>();
+builder.Services.AddTransient<IAppDbContext, AppDbContext>();
 
-builder.Services.AddAuthorization(options=>
+builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy("AdminPolicy", policy => policy.RequireRole("SystemAdmin","Admin"));
-    options.AddPolicy("AuditViewPolicy", policy => policy.RequireRole("SystemAdmin","Admin","Auditor"));
-    options.AddPolicy("DocumentManagePolicy", policy => policy.RequireRole("SystemAdmin","Admin","User","Doctor"));
+    options.AddPolicy("AdminPolicy", policy => policy.RequireRole("SystemAdmin", "Admin"));
+    options.AddPolicy("AuditViewPolicy", policy => policy.RequireRole("SystemAdmin", "Admin", "Auditor"));
+    options.AddPolicy("DocumentManagePolicy", policy => policy.RequireRole("SystemAdmin", "Admin", "User", "Doctor"));
 });
 
 builder.Services.AddOpenTelemetry()
-.ConfigureResource(resource => resource.AddService("CipherRAGGateway")) 
-                .WithTracing(tracing =>
-                {
-                    tracing.AddAspNetCoreInstrumentation()
-                    .AddHttpClientInstrumentation();
+.ConfigureResource(resource => resource.AddService("CipherRAGGateway"))
+.WithTracing(tracing =>
+{
+    tracing.AddAspNetCoreInstrumentation()
+           .AddHttpClientInstrumentation();
 
-                    tracing.AddOtlpExporter(options =>
-                    {
-                        options.Endpoint = new Uri("http://localhost:5341/ingest/otlp/v1/traces");
-                
-                        options.Protocol = OpenTelemetry.Exporter.OtlpExportProtocol.HttpProtobuf;
-                    });
-                })
-                .WithMetrics(metrics =>
-                {
-                    metrics.AddAspNetCoreInstrumentation()
-                    .AddHttpClientInstrumentation();
-                    
-                   metrics.AddPrometheusExporter();
-                
-                  
-                });
+    tracing.AddOtlpExporter(options =>
+    {
+        options.Endpoint = new Uri("http://localhost:5341/ingest/otlp/v1/traces");
+        options.Protocol = OpenTelemetry.Exporter.OtlpExportProtocol.HttpProtobuf;
+    });
+})
+.WithMetrics(metrics =>
+{
+    metrics.AddAspNetCoreInstrumentation()
+           .AddHttpClientInstrumentation();
+
+    metrics.AddPrometheusExporter();
+});
 
 builder.Services.AddResponseCompression(options =>
 {
-    
     options.EnableForHttps = true;
     options.Providers.Add<BrotliCompressionProvider>();
     options.Providers.Add<GzipCompressionProvider>();
@@ -173,8 +204,8 @@ builder.Services.AddResponseCompression(options =>
         "text/html",
         "application/xml"
     };
-
 });
+
 builder.Services.Configure<BrotliCompressionProviderOptions>(options =>
 {
     options.Level = CompressionLevel.Fastest;
@@ -184,18 +215,17 @@ builder.Services.Configure<GzipCompressionProviderOptions>(options =>
     options.Level = CompressionLevel.Fastest;
 });
 
-builder.Services.AddRateLimiter(options=>
+builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-    options.AddSlidingWindowLimiter ("DefaultPolicy", LimiterOptions =>
+    options.AddSlidingWindowLimiter("DefaultPolicy", limiterOptions =>
     {
-        LimiterOptions.Window = TimeSpan.FromMinutes(1);
-        LimiterOptions.PermitLimit = 10;
-        LimiterOptions.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-        LimiterOptions.QueueLimit =10;
-
-        LimiterOptions.SegmentsPerWindow = 6;
-        LimiterOptions.AutoReplenishment = true;
+        limiterOptions.Window = TimeSpan.FromMinutes(1);
+        limiterOptions.PermitLimit = 10;
+        limiterOptions.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+        limiterOptions.QueueLimit = 10;
+        limiterOptions.SegmentsPerWindow = 6;
+        limiterOptions.AutoReplenishment = true;
     });
     options.AddFixedWindowLimiter("AuthPolicy", limiterOptions =>
     {
@@ -214,19 +244,17 @@ builder.Services.AddRateLimiter(options=>
 
 builder.Services.AddExceptionHandler<CipherRAG.Infrastructure.Middleware.GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
+
 var app = builder.Build();
 
 app.UseStatusCodePages();
 app.UseExceptionHandler();
 
-
-if(app.Environment.IsDevelopment())
+if (app.Environment.IsDevelopment())
 {
     app.UseDeveloperExceptionPage();
 }
 
-
-app.UseHttpsRedirection();
 app.UseCors();
 app.UseSerilogRequestLogging();
 app.UseAuthentication();
@@ -235,14 +263,15 @@ app.UseRateLimiter();
 
 app.UseResponseCompression();
 
-// Enable Swagger UI in Development
-if (app.Environment.IsDevelopment())
-{   
+// Enable Swagger UI in Development and on Cloud deployments (accessible at /swagger)
+var enableSwagger = app.Environment.IsDevelopment() || app.Configuration.GetValue<bool>("EnableSwagger", true);
+if (enableSwagger)
+{
     app.UseSwagger();
     app.UseSwaggerUI(c =>
     {
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "CipherRAG API v1");
-        c.RoutePrefix = "swagger"; // Serve Swagger at http://localhost:port/swagger
+        c.RoutePrefix = "swagger";
     });
 }
 
@@ -257,17 +286,24 @@ app.UseStaticFiles(new StaticFileOptions
     }
 });
 
-
-// Database changes and demo data are opt-in outside development.
+// Database migrations and demo seed data (opt-in or triggered via config)
 if (app.Configuration.GetValue<bool>("Database:ApplyMigrationsOnStartup"))
 {
-    using var scope = app.Services.CreateScope();
-    var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await context.Database.MigrateAsync();
-
-    if (app.Configuration.GetValue<bool>("Database:SeedOnStartup"))
+    try
     {
-        await DbInitializer.SeedAsync(context);
+        using var scope = app.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await context.Database.MigrateAsync();
+
+        if (app.Configuration.GetValue<bool>("Database:SeedOnStartup"))
+        {
+            await DbInitializer.SeedAsync(context);
+        }
+    }
+    catch (Exception ex)
+    {
+        var logger = app.Services.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "Failed to apply database migrations or seed data on startup. Verify ConnectionStrings:DefaultConnection.");
     }
 }
 
@@ -276,8 +312,3 @@ app.MapAppEndpoints();
 app.MapPrometheusScrapingEndpoint();
 
 app.Run();
-
-//make JWT 
-// Response caching
-//Rate Limitting
-//

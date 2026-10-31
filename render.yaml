@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: cipherrag-api
+    runtime: docker
+    plan: free
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: Database__ApplyMigrationsOnStartup
+        value: "true"
+      - key: Database__SeedOnStartup
+        value: "true"
+      - key: EnableSwagger
+        value: "true"
+      - key: Jwt__Key
+        generateValue: true
+      - key: Jwt__Issuer
+        value: CipherRAG
+      - key: Jwt__Audience
+        value: CipherRAGUsers
+      - key: ConnectionStrings__DefaultConnection
+        sync: false
+

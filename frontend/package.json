@@ -1,0 +1,9 @@
+{
+  "name": "cipherrag-frontend",
+  "version": "1.0.0",
+  "description": "CipherRAG Web Console Frontend",
+  "scripts": {
+    "start": "npx serve ."
+  }
+}
+

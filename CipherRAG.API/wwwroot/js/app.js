@@ -1,10 +1,10 @@
-import { api, ApiError } from './api.js?v=20260906_4';
-import { icon, toast } from './utils.js?v=20260906_4';
-import { renderChatView, loadState as loadChatState } from './views/chat.js?v=20260906_4';
-import { renderKnowledgeView } from './views/knowledge.js?v=20260906_4';
-import { renderAuditView } from './views/audit.js?v=20260906_4';
-import { renderUsersView } from './views/users.js?v=20260906_4';
-import { renderPoliciesView } from './views/policies.js?v=20260906_4';
+import { api, ApiError } from './api.js?v=20261031_1';
+import { icon, toast } from './utils.js?v=20261031_1';
+import { renderChatView, loadState as loadChatState } from './views/chat.js?v=20261031_1';
+import { renderKnowledgeView } from './views/knowledge.js?v=20261031_1';
+import { renderAuditView } from './views/audit.js?v=20261031_1';
+import { renderUsersView } from './views/users.js?v=20261031_1';
+import { renderPoliciesView } from './views/policies.js?v=20261031_1';
 
 let currentUser = null;
 let viewContainer = null;
@@ -31,7 +31,31 @@ function setTopbar(title) {
   if (el) el.textContent = title;
 }
 
+function wireApiConfig() {
+  const label = document.getElementById('apiBaseUrlText');
+  const btn = document.getElementById('changeApiBtn');
+  if (!label || !btn) return;
+
+  const current = api.getApiBaseUrl();
+  label.textContent = current ? current.replace(/^https?:\/\//, '') : 'Auto (same-origin)';
+
+  btn.addEventListener('click', () => {
+    const currentUrl = api.getApiBaseUrl();
+    const entered = prompt(
+      'Enter your Render Backend API URL (e.g. https://cipherrag-api.onrender.com) or leave blank for same-origin proxy:',
+      currentUrl
+    );
+    if (entered !== null) {
+      api.setApiBaseUrl(entered.trim());
+      label.textContent = entered.trim() ? entered.trim().replace(/^https?:\/\//, '') : 'Auto (same-origin)';
+      toast('Backend URL updated! Reloading…', 'success');
+      setTimeout(() => window.location.reload(), 700);
+    }
+  });
+}
+
 async function boot() {
+  wireApiConfig();
   renderDemoAccounts();
   wireLoginForm();
   wireStaticUI();

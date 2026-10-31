@@ -7,6 +7,28 @@ class ApiError extends Error {
 }
 
 const ACCESS_TOKEN_KEY = 'cipherrag.accessToken';
+const API_URL_KEY = 'cipherrag.apiUrl';
+
+function getApiBaseUrl() {
+  if (typeof window !== 'undefined' && window.CIPHERRAG_API_URL) {
+    return window.CIPHERRAG_API_URL.replace(/\/+$/, '');
+  }
+  if (typeof localStorage !== 'undefined') {
+    const stored = localStorage.getItem(API_URL_KEY);
+    if (stored && stored.trim()) return stored.trim().replace(/\/+$/, '');
+  }
+  return '';
+}
+
+function setApiBaseUrl(url) {
+  if (typeof localStorage !== 'undefined') {
+    if (url && url.trim()) {
+      localStorage.setItem(API_URL_KEY, url.trim().replace(/\/+$/, ''));
+    } else {
+      localStorage.removeItem(API_URL_KEY);
+    }
+  }
+}
 
 function getAccessToken() {
   return localStorage.getItem(ACCESS_TOKEN_KEY);
@@ -18,10 +40,17 @@ function setAccessToken(token) {
 }
 
 async function request(path, options = {}) {
+  const baseUrl = getApiBaseUrl();
+  const fullUrl = path.startsWith('http://') || path.startsWith('https://')
+    ? path
+    : `${baseUrl}${path.startsWith('/') ? path : '/' + path}`;
+
+  const isCrossOrigin = baseUrl && typeof window !== 'undefined' && !fullUrl.startsWith(window.location.origin);
+
   const config = {
     method: options.method || 'GET',
     headers: { ...(options.headers || {}) },
-    credentials: 'same-origin'
+    credentials: isCrossOrigin ? 'include' : 'same-origin'
   };
 
   const accessToken = getAccessToken();
@@ -40,9 +69,10 @@ async function request(path, options = {}) {
 
   let response;
   try {
-    response = await fetch(path, config);
+    response = await fetch(fullUrl, config);
   } catch (e) {
-    throw new ApiError(0, 'Network error — could not reach the server.');
+    const target = baseUrl || (typeof window !== 'undefined' ? window.location.origin : 'API server');
+    throw new ApiError(0, `Network error — could not reach the server at ${target}.`);
   }
 
   if (response.status === 401) {
@@ -70,6 +100,9 @@ async function request(path, options = {}) {
 
 export const api = {
   request,
+  getApiBaseUrl,
+  setApiBaseUrl,
+  getAccessToken,
   setAccessToken,
   clearAccessToken: () => setAccessToken(null),
 
